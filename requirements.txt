@@ -6,5 +6,5 @@ streamlit-cropper
 streamlit-drawable-canvas
 numpy
 opencv-python-headless
-cv2
+
 
