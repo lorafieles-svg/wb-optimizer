@@ -1,3 +1,4 @@
+rich==13.9.4
 streamlit==1.39.0
 rembg[gpu,cli]
 pillow
@@ -6,6 +7,7 @@ streamlit-cropper
 streamlit-drawable-canvas
 numpy
 opencv-python-headless
+
 
 
 
