@@ -1,106 +1,114 @@
 import streamlit as st
+import numpy as np
+import cv2
 from rembg import remove
 from PIL import Image
 from io import BytesIO
-from streamlit_cropper import st_cropper  # Импортируем кроппер
+from streamlit_drawable_canvas import st_canvas
 
-st.set_page_config(layout="wide", page_title="Удаление фона для WB/Ozon")
+st.set_page_config(layout="wide", page_title="Умное выделение объектов")
 
-st.title("✂️ Генератор фото для маркетплейсов")
+st.title("🖌️ Выделите предмет для обработки")
+st.write("Обведите нужный предмет, и нейросеть оставит только его.")
 
-# --- Боковая панель ---
+# --- Сайдбар ---
 st.sidebar.header("Настройки")
+uploaded_file = st.sidebar.file_uploader("1. Загрузите фото", type=["png", "jpg", "jpeg", "webp"])
 
-# Загрузка
-uploaded_file = st.sidebar.file_uploader("Выберите изображение", type=["png", "jpg", "jpeg", "webp"])
+# Настройки кисти
+stroke_width = st.sidebar.slider("Толщина линии выделения", 1, 10, 3)
+point_display_radius = st.sidebar.slider("Радиус точек (для точности)", 0, 9, 3) if st.sidebar.checkbox("Показать точки контура") else 0
 
-# Настройки фона
-bg_option = st.sidebar.radio(
-    "Фон результата:",
-    ("Прозрачный (PNG)", "Белый (JPG)", "Цветной")
-)
+bg_option = st.sidebar.radio("Фон результата:", ("Прозрачный", "Белый", "Цветной"))
 bg_color = "#FFFFFF"
 if bg_option == "Цветной":
-    bg_color = st.sidebar.color_picker("Выберите цвет", "#00FF00")
+    bg_color = st.sidebar.color_picker("Цвет фона", "#00FF00")
 
-# Настройки обработки
-use_alpha_matting = st.sidebar.checkbox("Улучшить края (для меха/волос)", value=False)
-enable_cropping = st.sidebar.checkbox("✂️ Обрезать фото перед обработкой", value=True)
+# --- Логика ---
+if uploaded_file:
+    # 1. Подготовка изображения
+    image = Image.open(uploaded_file).convert("RGB")
+    
+    # Подгоняем размер для удобства рисования (макс ширина 700px)
+    max_width = 700
+    if image.width > max_width:
+        ratio = max_width / image.width
+        new_height = int(image.height * ratio)
+        image = image.resize((max_width, new_height))
+    
+    col1, col2 = st.columns([1, 1])
 
-# --- Основная часть ---
-if uploaded_file is not None:
-    original_image = Image.open(uploaded_file)
-    
-    col1, col2 = st.columns(2)
-    
-    # БЛОК 1: Работа с оригиналом
     with col1:
-        st.header("1. Исходник")
+        st.header("Оригинал (Рисуйте здесь)")
+        st.info("👆 Выберите инструмент 'Polygon' (многоугольник) в меню ниже и обведите предмет по контуру (замкните линию).")
         
-        # Логика обрезки
-        if enable_cropping:
-            st.info("Выделите область, которую нужно оставить:")
-            # Виджет обрезки. realtime_update=True показывает результат сразу
-            image_to_process = st_cropper(
-                original_image,
-                realtime_update=True,
-                box_color='#FF0000',
-                aspect_ratio=None 
-            )
-            st.caption("Результат обрезки (превью):")
-            st.image(image_to_process, width=200)
-        else:
-            st.image(original_image, use_container_width=True)
-            image_to_process = original_image
+        # 2. Создаем Канвас (Холст) для рисования
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.3)",  # Оранжевая заливка выделения
+            stroke_width=stroke_width,
+            stroke_color="#FF0000",
+            background_image=image,
+            update_streamlit=True,
+            height=image.height,
+            width=image.width,
+            drawing_mode="polygon", # Режим рисования многоугольника
+            point_display_radius=point_display_radius,
+            key="canvas",
+        )
 
-    # БЛОК 2: Результат
-    with col2:
-        st.header("2. Результат")
+    # 3. Обработка выделения
+    if canvas_result.image_data is not None:
+        # Получаем маску, которую нарисовал пользователь
+        mask = canvas_result.image_data[:, :, 3] # Берем только Alpha канал (прозрачность)
         
-        # Кнопка запуска
-        if st.button("Удалить фон 🚀", type="primary"):
-            with st.spinner("Магия нейросетей..."):
-                try:
-                    # Конвертация для rembg
-                    buf = BytesIO()
-                    image_to_process.save(buf, format="PNG")
-                    img_bytes = buf.getvalue()
+        # Проверяем, нарисовал ли пользователь хоть что-то
+        if np.sum(mask) > 0:
+            with col2:
+                st.header("Результат")
+                
+                if st.button("🚀 Вырезать выделенное", type="primary"):
+                    with st.spinner("Вырезаю и чищу края..."):
+                        try:
+                            # А. Применяем грубую маску пользователя
+                            img_array = np.array(image)
+                            # Создаем 4-й канал (альфа)
+                            img_array = np.dstack((img_array, np.zeros((image.height, image.width), dtype=np.uint8) + 255))
+                            
+                            # Там, где маска 0 (ничего не нарисовано), делаем картинку прозрачной
+                            img_array[mask == 0] = [0, 0, 0, 0]
+                            
+                            rough_cut = Image.fromarray(img_array)
 
-                    # Удаление фона
-                    result_bytes = remove(
-                        img_bytes, 
-                        alpha_matting=use_alpha_matting,
-                        alpha_matting_foreground_threshold=240,
-                        alpha_matting_background_threshold=10
-                    )
-                    
-                    result_image = Image.open(BytesIO(result_bytes))
+                            # Б. Отправляем грубый срез в REMBG для идеальной зачистки краев
+                            # Сначала конвертируем в байты
+                            buf = BytesIO()
+                            rough_cut.save(buf, format="PNG")
+                            rough_bytes = buf.getvalue()
 
-                    # Наложение фона
-                    final_format = "PNG"
-                    if bg_option != "Прозрачный (PNG)":
-                        background = Image.new("RGB", result_image.size, bg_color)
-                        background.paste(result_image, mask=result_image.split()[3])
-                        result_image = background
-                        final_format = "JPEG"
+                            # Чистовое удаление фона
+                            clean_bytes = remove(rough_bytes)
+                            final_image = Image.open(BytesIO(clean_bytes))
 
-                    # Показ результата
-                    st.image(result_image, use_container_width=True)
+                            # В. Работа с фоном (белый/цветной)
+                            final_format = "PNG"
+                            if bg_option != "Прозрачный":
+                                background = Image.new("RGB", final_image.size, bg_color)
+                                background.paste(final_image, mask=final_image.split()[3])
+                                final_image = background
+                                final_format = "JPEG"
 
-                    # Скачивание
-                    buf_out = BytesIO()
-                    result_image.save(buf_out, format=final_format, quality=95)
-                    st.download_button(
-                        label="⬇️ Скачать",
-                        data=buf_out.getvalue(),
-                        file_name=f"result.{final_format.lower()}",
-                        mime=f"image/{final_format.lower()}"
-                    )
+                            st.image(final_image, use_container_width=True)
+                            
+                            # Скачивание
+                            buf_out = BytesIO()
+                            final_image.save(buf_out, format=final_format, quality=100)
+                            st.download_button("⬇️ Скачать результат", buf_out.getvalue(), f"cutout.{final_format.lower()}", f"image/{final_format.lower()}")
 
-                except Exception as e:
-                    st.error(f"Ошибка: {e}")
+                        except Exception as e:
+                            st.error(f"Ошибка: {e}")
         else:
-            st.info("Нажмите кнопку, чтобы обработать выделенную область.")
-
+            with col2:
+                st.write("👈 Обведите предмет слева, чтобы появился результат.")
+    
 else:
-    st.info("⬅️ Загрузите файл в меню слева.")
+    st.info("Загрузите картинку в меню слева.")
