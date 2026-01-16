@@ -1,4 +1,4 @@
-streamlit
+streamlit==1.39.0
 rembg[gpu,cli]
 pillow
 watchdog
@@ -6,5 +6,6 @@ streamlit-cropper
 streamlit-drawable-canvas
 numpy
 opencv-python-headless
+
 
 
