@@ -3,4 +3,7 @@ rembg[gpu,cli]
 pillow
 watchdog
 streamlit-cropper
+streamlit-drawable-canvas
+numpy
+opencv-python-headless
 
