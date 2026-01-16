@@ -2,104 +2,105 @@ import streamlit as st
 from rembg import remove
 from PIL import Image
 from io import BytesIO
+from streamlit_cropper import st_cropper  # Импортируем кроппер
 
-# Настройка страницы
 st.set_page_config(layout="wide", page_title="Удаление фона для WB/Ozon")
 
 st.title("✂️ Генератор фото для маркетплейсов")
-st.write("Загрузите фото товара, чтобы убрать фон и подготовить карточку.")
 
-# --- Боковая панель настроек ---
-st.sidebar.header("Настройки обработки")
+# --- Боковая панель ---
+st.sidebar.header("Настройки")
 
-# Опция: Альфа-матирование (для сложных объектов типа волос или меха)
-use_alpha_matting = st.sidebar.checkbox(
-    "Улучшить края (Alpha Matting)", 
-    value=False, 
-    help="Включите для пушистых объектов или волос. Обработка займет чуть больше времени."
-)
+# Загрузка
+uploaded_file = st.sidebar.file_uploader("Выберите изображение", type=["png", "jpg", "jpeg", "webp"])
 
-# Опция: Цвет фона
+# Настройки фона
 bg_option = st.sidebar.radio(
-    "Выберите фон результата:",
-    ("Прозрачный (PNG)", "Белый (JPG/PNG)", "Цветной")
+    "Фон результата:",
+    ("Прозрачный (PNG)", "Белый (JPG)", "Цветной")
 )
-
-bg_color = "#FFFFFF" # По умолчанию белый
+bg_color = "#FFFFFF"
 if bg_option == "Цветной":
     bg_color = st.sidebar.color_picker("Выберите цвет", "#00FF00")
 
-# --- Основная логика ---
+# Настройки обработки
+use_alpha_matting = st.sidebar.checkbox("Улучшить края (для меха/волос)", value=False)
+enable_cropping = st.sidebar.checkbox("✂️ Обрезать фото перед обработкой", value=True)
 
-# Загрузчик файлов
-uploaded_file = st.sidebar.file_uploader("Выберите изображение", type=["png", "jpg", "jpeg", "webp"])
-
+# --- Основная часть ---
 if uploaded_file is not None:
-    # Загружаем и показываем оригинал
     original_image = Image.open(uploaded_file)
     
     col1, col2 = st.columns(2)
     
+    # БЛОК 1: Работа с оригиналом
     with col1:
-        st.header("Оригинал")
-        st.image(original_image, use_container_width=True)
+        st.header("1. Исходник")
+        
+        # Логика обрезки
+        if enable_cropping:
+            st.info("Выделите область, которую нужно оставить:")
+            # Виджет обрезки. realtime_update=True показывает результат сразу
+            image_to_process = st_cropper(
+                original_image,
+                realtime_update=True,
+                box_color='#FF0000',
+                aspect_ratio=None 
+            )
+            st.caption("Результат обрезки (превью):")
+            st.image(image_to_process, width=200)
+        else:
+            st.image(original_image, use_container_width=True)
+            image_to_process = original_image
 
-    # Кнопка обработки (чтобы не запускать тяжелую модель лишний раз)
-    if st.sidebar.button("Удалить фон 🚀", type="primary"):
-        with st.spinner("Обрабатываю изображение..."):
-            try:
-                # 1. Удаляем фон
-                # Конвертируем в bytes для rembg
-                buf = BytesIO()
-                original_image.save(buf, format="PNG")
-                image_bytes = buf.getvalue()
+    # БЛОК 2: Результат
+    with col2:
+        st.header("2. Результат")
+        
+        # Кнопка запуска
+        if st.button("Удалить фон 🚀", type="primary"):
+            with st.spinner("Магия нейросетей..."):
+                try:
+                    # Конвертация для rembg
+                    buf = BytesIO()
+                    image_to_process.save(buf, format="PNG")
+                    img_bytes = buf.getvalue()
 
-                # Параметры для rembg
-                # alpha_matting помогает с полупрозрачными краями
-                result_bytes = remove(
-                    image_bytes, 
-                    alpha_matting=use_alpha_matting,
-                    alpha_matting_foreground_threshold=240,
-                    alpha_matting_background_threshold=10
-                )
-                
-                # Открываем результат как PIL Image
-                result_image = Image.open(BytesIO(result_bytes))
+                    # Удаление фона
+                    result_bytes = remove(
+                        img_bytes, 
+                        alpha_matting=use_alpha_matting,
+                        alpha_matting_foreground_threshold=240,
+                        alpha_matting_background_threshold=10
+                    )
+                    
+                    result_image = Image.open(BytesIO(result_bytes))
 
-                # 2. Обработка фона (если выбран не прозрачный)
-                final_format = "PNG"
-                if bg_option != "Прозрачный (PNG)":
-                    # Создаем фон выбранного цвета
-                    background = Image.new("RGB", result_image.size, bg_color)
-                    # Накладываем вырезанное изображение сверху
-                    # Используем result_image как маску само для себя
-                    background.paste(result_image, mask=result_image.split()[3]) 
-                    result_image = background
-                    final_format = "JPEG" if bg_option == "Белый (JPG/PNG)" else "PNG"
+                    # Наложение фона
+                    final_format = "PNG"
+                    if bg_option != "Прозрачный (PNG)":
+                        background = Image.new("RGB", result_image.size, bg_color)
+                        background.paste(result_image, mask=result_image.split()[3])
+                        result_image = background
+                        final_format = "JPEG"
 
-                # 3. Показываем результат
-                with col2:
-                    st.header("Результат")
+                    # Показ результата
                     st.image(result_image, use_container_width=True)
 
-                # 4. Кнопка скачивания
-                # Конвертируем результат обратно в байты для скачивания
-                buf_out = BytesIO()
-                result_image.save(buf_out, format=final_format, quality=95)
-                byte_im = buf_out.getvalue()
+                    # Скачивание
+                    buf_out = BytesIO()
+                    result_image.save(buf_out, format=final_format, quality=95)
+                    st.download_button(
+                        label="⬇️ Скачать",
+                        data=buf_out.getvalue(),
+                        file_name=f"result.{final_format.lower()}",
+                        mime=f"image/{final_format.lower()}"
+                    )
 
-                filename = f"result.{final_format.lower()}"
-                
-                st.download_button(
-                    label="⬇️ Скачать результат",
-                    data=byte_im,
-                    file_name=filename,
-                    mime=f"image/{final_format.lower()}"
-                )
-
-            except Exception as e:
-                st.error(f"Произошла ошибка: {e}")
+                except Exception as e:
+                    st.error(f"Ошибка: {e}")
+        else:
+            st.info("Нажмите кнопку, чтобы обработать выделенную область.")
 
 else:
-    # Инструкция если файл не загружен
-    st.info("⬅️ Загрузите файл в меню слева, чтобы начать.")
+    st.info("⬅️ Загрузите файл в меню слева.")
