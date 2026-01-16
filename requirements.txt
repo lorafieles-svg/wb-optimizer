@@ -1,4 +1,5 @@
 streamlit
-rembg
+rembg[gpu,cli]
 pillow
 watchdog
+
